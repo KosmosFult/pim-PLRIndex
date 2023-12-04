@@ -85,6 +85,81 @@ struct ApproxPos {
  */
 template<typename K, size_t Epsilon = 64, size_t EpsilonRecursive = 4, typename Floating = float>
 class PGMIndex {
+
+public:
+
+    static constexpr size_t epsilon_value = Epsilon;
+
+    struct Segment;
+
+    /**
+     * Constructs an empty index.
+     */
+    PGMIndex() = default;
+
+    /**
+     * Constructs the index on the given sorted vector.
+     * @param data the vector of keys to be indexed, must be sorted
+     */
+    explicit PGMIndex(const std::vector<K> &data) : PGMIndex(data.begin(), data.end()) {}
+
+    /**
+     * Constructs the index on the sorted keys in the range [first, last).
+     * @param first, last the range containing the sorted keys to be indexed
+     */
+    template<typename RandomIt>
+    PGMIndex(RandomIt first, RandomIt last)
+        : n(std::distance(first, last)),
+          first_key(n ? *first : K(0)),
+          segments(),
+          levels_offsets() {
+        build(first, last, Epsilon, EpsilonRecursive, segments, levels_offsets);
+    }
+
+    /**
+     * Returns the approximate position and the range where @p key can be found.
+     * @param key the value of the element to search for
+     * @return a struct with the approximate position and bounds of the range
+     */
+    ApproxPos search(const K &key) const {
+        auto k = std::max(first_key, key);
+        auto it = segment_for_key(k);
+        auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
+        auto lo = PGM_SUB_EPS(pos, Epsilon);
+        auto hi = PGM_ADD_EPS(pos, Epsilon, n);
+        return {pos, lo, hi};
+    }
+
+    /**
+     * Returns the number of segments in the last level of the index.
+     * @return the number of segments
+     */
+    size_t segments_count() const { return segments.empty() ? 0 : levels_offsets[1] - 1; }
+
+    /**
+     * Returns the number of levels of the index.
+     * @return the number of levels of the index
+     */
+    size_t height() const { return levels_offsets.size() - 1; }
+
+    /**
+     * Returns the size of the index in bytes.
+     * @return the size of the index in bytes
+     */
+    size_t size_in_bytes() const { return segments.size() * sizeof(Segment) + levels_offsets.size() * sizeof(size_t); }
+
+    /**
+     * Return the reference of segments.
+     * @return the reference of segments
+    */
+    const std::vector<Segment>& get_segments() const { return segments; }
+    
+    /**
+     * Return the reference of levels_offsets.
+     * @return the reference of levels_offsets
+    */
+    const std::vector<size_t>& get_levels_offsets() const { return levels_offsets; }
+
 protected:
     template<typename, size_t, size_t, uint8_t, typename>
     friend class BucketingPGMIndex;
@@ -93,7 +168,6 @@ protected:
     friend class EliasFanoPGMIndex;
 
     static_assert(Epsilon > 0);
-    struct Segment;
 
     size_t n;                           ///< The number of elements this index was built on.
     K first_key;                        ///< The smallest element.
@@ -177,78 +251,6 @@ protected:
         }
         return it;
     }
-
-public:
-
-    static constexpr size_t epsilon_value = Epsilon;
-
-    /**
-     * Constructs an empty index.
-     */
-    PGMIndex() = default;
-
-    /**
-     * Constructs the index on the given sorted vector.
-     * @param data the vector of keys to be indexed, must be sorted
-     */
-    explicit PGMIndex(const std::vector<K> &data) : PGMIndex(data.begin(), data.end()) {}
-
-    /**
-     * Constructs the index on the sorted keys in the range [first, last).
-     * @param first, last the range containing the sorted keys to be indexed
-     */
-    template<typename RandomIt>
-    PGMIndex(RandomIt first, RandomIt last)
-        : n(std::distance(first, last)),
-          first_key(n ? *first : K(0)),
-          segments(),
-          levels_offsets() {
-        build(first, last, Epsilon, EpsilonRecursive, segments, levels_offsets);
-    }
-
-    /**
-     * Returns the approximate position and the range where @p key can be found.
-     * @param key the value of the element to search for
-     * @return a struct with the approximate position and bounds of the range
-     */
-    ApproxPos search(const K &key) const {
-        auto k = std::max(first_key, key);
-        auto it = segment_for_key(k);
-        auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
-        auto lo = PGM_SUB_EPS(pos, Epsilon);
-        auto hi = PGM_ADD_EPS(pos, Epsilon, n);
-        return {pos, lo, hi};
-    }
-
-    /**
-     * Returns the number of segments in the last level of the index.
-     * @return the number of segments
-     */
-    size_t segments_count() const { return segments.empty() ? 0 : levels_offsets[1] - 1; }
-
-    /**
-     * Returns the number of levels of the index.
-     * @return the number of levels of the index
-     */
-    size_t height() const { return levels_offsets.size() - 1; }
-
-    /**
-     * Returns the size of the index in bytes.
-     * @return the size of the index in bytes
-     */
-    size_t size_in_bytes() const { return segments.size() * sizeof(Segment) + levels_offsets.size() * sizeof(size_t); }
-
-    /**
-     * Return the reference of segments.
-     * @return the reference of segments
-    */
-    const std::vector<Segment>& get_segments() const { return segments; }
-    
-    /**
-     * Return the reference of levels_offsets.
-     * @return the reference of levels_offsets
-    */
-    const std::vector<size_t>& get_levels_offsets() const { return levels_offsets; }
 };
 
 #pragma pack(push, 1)

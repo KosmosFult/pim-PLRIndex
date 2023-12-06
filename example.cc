@@ -2,7 +2,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <algorithm>
-#include "pgm/pgm_index.hpp"
+#include "include/pgm/pgm_index.hpp"
 
 int main() {
     // Generate some random data

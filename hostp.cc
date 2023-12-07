@@ -28,7 +28,6 @@ static constexpr int32_t BUFFER_SIZE = 8;
 const int epsilon = EPSILON;
 const int maxsegs_per_dpu = 64;
 
-std::vector<std::vector<int>> result(1);
 std::vector<int> keys(BUFFER_SIZE);
 std::vector<Nodeinfo> distri_list;
 std::vector<int> data;
@@ -133,6 +132,13 @@ std::vector<T> get_subset(const std::vector<T> &original, int start, int len)
 
 	if (start < 0 || len <= 0 || (start + len) > original.size())
 	{
+		// 对于最下层不会进入
+		if((start + len) == (original.size() + 1))
+		{
+			auto subset =  std::vector<T>(original.begin() + start, original.begin() + start + len);
+			subset.push_back(original.back());
+			return subset;
+		}
 		std::cerr << "Invalid index range." << std::endl;
 		return std::vector<T>();
 	}
@@ -161,7 +167,9 @@ int distribute(dpu::DpuSet &system, const pgm::PGMIndex<int, epsilon> &pgi, cons
 	for (int i = 0; i < ndpus; i++)
 	{
 		// 这里前12字节(sub_segs第一个元素存放segments的数量)
-		auto sub_segs = get_subset(segments, distri_list[i].segs_index, distri_list[i].n_segs);
+		// 注意 auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
+		// 因此需要多存一段
+		auto sub_segs = get_subset(segments, distri_list[i].segs_index, distri_list[i].n_segs+1);
 		auto sub_data = get_subset(data, distri_list[i].lkey_i, distri_list[i].rkey_i + 1 - distri_list[i].lkey_i);
 		
 		sub_segs.insert(sub_segs.begin(), {distri_list[i].n_segs, 0, distri_list[i].lkey_i});
@@ -218,9 +226,26 @@ std::vector<std::vector<T>> distribute_query(std::vector<T> &querys, dpu::DpuSet
 	return querys_list;
 }
 
-// 返回下标
-std::vector<int> get_result()
+
+std::vector<std::vector<int>> get_result(DpuSet &system)
 {
+	std::vector<std::vector<int>> result(system.dpus().size(), 
+				std::vector<int>(QUERY_BATCH));
+	
+	system.copy(result, "result");
+	return result;
+}
+
+template<typename T>
+bool validate_result(std::vector<std::vector<T>> &query_list, std::vector<std::vector<T>> &result_list)
+{
+	for(int i = 0; i < query_list.size(); i++)
+	{
+		for(int j = 1; j <= query_list[i][0]; j++)
+			if(query_list[i][j] != result_list[i][j])
+				return false;
+	}
+	return true;
 }
 
 int main(int argc, char **argv)
@@ -229,17 +254,18 @@ int main(int argc, char **argv)
 	{
 		generate_data(data);
 		auto pgi = build_index(data);
-
 		auto system = DpuSet::allocate(8);
 		system.load(dpu_binary);
 		distribute(system, pgi, data);
-
 		auto querys = generate_query(data, 256);
-		distribute_query(querys, system);
+		auto query_list = distribute_query(querys, system);
 
 		system.exec();
 
-		// get_result();
+		auto result_list = get_result(system);
+
+		std::cout << "validate query: " << validate_result(query_list, result_list) << std::endl;
+
 		system.log(std::cout);
 	}
 	catch (const DpuError &e)

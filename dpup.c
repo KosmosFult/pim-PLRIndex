@@ -49,7 +49,7 @@ void print_info()
 {
     int n_query = query_keys[0];
     printf("sgements:\n");
-    for (int i = 1; i <= segs_len; i++)
+    for (int i = 1; i <= segs_len+1; i++)
     {
         printf("[%d]: %d, %f, %d\n", i, segments_list[i].key, segments_list[i].slope, segments_list[i].intercept);
     }
@@ -69,13 +69,20 @@ int init_data()
     segs_len = segments_list[0].key;
     lkey_i = segments_list[0].intercept;
     data_len = data[0];
-    printf("segs len: %d\ndata len:%d\nlkey_i:%d\n", segs_len, data_len, lkey_i);
+    printf("segs len: %d\ndata len:%d\nlkey_i:%d\nrange(%d,%d)\n", segs_len, data_len, 
+            lkey_i, data[1], data[data_len]);
     if(segs_len > MAX_SEGS)
     {
         printf("segs len:%d > max segs len\n", segs_len);
         return -1;
     }
     return 0;
+}
+
+size_t seg_cal(segment *seg, int k)
+{
+    size_t pos  = seg->slope * (k - seg->key) + seg->intercept;
+    return pos > 0 ? pos : 0;
 }
 
 
@@ -87,7 +94,7 @@ ApproxPos get_appos(int k)
 
     __dma_aligned segment seg_buffer[MAX_SEGS];
     
-    mram_read(segments_list, seg_buffer, UPPER_8_ALIGNED(sizeof(segment)*(segs_len+1)));
+    mram_read(segments_list, seg_buffer, UPPER_8_ALIGNED(sizeof(segment)*(segs_len+2)));  /* 注意还要读一段next */
     
     // 后面再换二分
     
@@ -100,16 +107,16 @@ ApproxPos get_appos(int k)
     // int a = 0;
     if (i <= 0)
     {
-        ApproxPos appos = {UINT32_MAX, 0, 0};
+        ApproxPos appos = {0, 0, 0};
         return appos;
     }
+    size_t cal_pos = seg_cal(&seg_buffer[i], k);
 
-    int cal_pos = seg_buffer[i].slope * k + seg_buffer[i].intercept;
+    cal_pos = min(cal_pos, seg_buffer[i+1].intercept);   // 为什么要这样
     cal_pos -= lkey_i;
-    int lo = PGM_SUB_EPS(cal_pos, EPSILON);
-    int hi = PGM_ADD_EPS(cal_pos, EPSILON, data_len);
+    size_t lo = PGM_SUB_EPS(cal_pos, EPSILON);
+    size_t hi = PGM_ADD_EPS(cal_pos, EPSILON, data_len);
     ApproxPos appos = {cal_pos, lo, hi};
-    // ApproxPos appos = {0,0,0};
 
     return appos;
 }
@@ -125,8 +132,9 @@ ApproxPos get_appos(int k)
 int search(int k)
 {
     ApproxPos appos = get_appos(k);
+    // printf("appos[%d,%d,%d]\n", appos.pos, appos.lo, appos.hi);
 
-    if(appos.pos == UINT32_MAX)
+    if(appos.hi == 0 && appos.lo == 0)
         return INT32_MIN;
 
     // 这里用seq read api
@@ -166,7 +174,7 @@ int query_handler()
     for(int i = 1; i <= query_buffer[0]; i++)
     {
         result_buffer[i] = search(query_buffer[i]);
-        printf("q[%d]: (%d,%d)\n", i, query_keys[i], result_buffer[i]);
+        // printf("q[%d]: (%d,%d)\n", i, query_keys[i], result_buffer[i]);
     }
 
     mram_write(result_buffer, result, QUERY_BATCH * sizeof(int));

@@ -37,7 +37,7 @@ void populate_mram(DpuSetOps &dpu, std::vector<int> &keys)
 	dpu.copy("keys", keys, static_cast<unsigned>(BUFFER_SIZE * sizeof(int)));
 }
 
-void generate_data(std::vector<int> &data, int data_size = 1000000)
+void generate_data(std::vector<int> &data, int data_size = 5000000)
 {
 	data.resize(data_size);
 	std::generate(data.begin(), data.end(), std::rand);
@@ -67,6 +67,7 @@ distirution_list(const std::vector<int> &data, const std::vector<pgm::PGMIndex<i
 	int data_i = 0; // 当前
 	for (auto &e : infolist)
 	{
+
 		e.segs_index = i;
 		i += e.n_segs;
 		e.lkey_i = data_i;
@@ -206,7 +207,13 @@ std::vector<std::vector<T>> distribute_query(std::vector<T> &querys, dpu::DpuSet
 	std::vector<int> list_added(querys_list.size(), 0); // list_added[i]表示querys_list[i]的长度
 	std::vector<T> fences;
 	for (auto &e : distri_list)
-		fences.push_back(data[e.lkey_i]);
+	{
+		// 这里有个特殊情况即最后一个段key大于data中任何key, 一般这个段key是key最大值
+		if(e.lkey_i > e.rkey_i)
+			fences.push_back(INT32_MAX);
+		else
+			fences.push_back(data[e.lkey_i]);
+	}
 
 	for (auto &k : querys)
 	{
@@ -248,25 +255,27 @@ bool validate_result(std::vector<std::vector<T>> &query_list, std::vector<std::v
 	return true;
 }
 
+
 int main(int argc, char **argv)
 {
 	try
 	{
 		generate_data(data);
 		auto pgi = build_index(data);
-		auto system = DpuSet::allocate(8);
+		auto system = DpuSet::allocate(64);
 		system.load(dpu_binary);
 		distribute(system, pgi, data);
-		auto querys = generate_query(data, 256);
+		auto querys = generate_query(data, 1024);
 		auto query_list = distribute_query(querys, system);
 
+		std::cout << "Query start..." << std::endl;
 		system.exec();
 
 		auto result_list = get_result(system);
 
 		std::cout << "validate query: " << validate_result(query_list, result_list) << std::endl;
 
-		system.log(std::cout);
+		// system.log(std::cout);
 	}
 	catch (const DpuError &e)
 	{

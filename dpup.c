@@ -53,11 +53,13 @@ void print_info()
     {
         printf("[%d]: %d, %f, %d\n", i, segments_list[i].key, segments_list[i].slope, segments_list[i].intercept);
     }
+
     printf("data size:%d\n", data_len);
-    for (int i = 1; i < 32; i++)
-    {
-        printf("[%d]: %d\n", i, data[i]);
-    }
+    // for (int i = 1; i < 32; i++)
+    // {
+    //     printf("[%d]: %d\n", i, data[i]);
+    // }
+
 
     printf("querys:%d\n", n_query);
     for (int i = 1; i <= n_query; i++)
@@ -98,13 +100,11 @@ ApproxPos get_appos(int k)
     
     // 后面再换二分
     
-    // 因为i=0就会报错，因此换个逻辑
-    // for(i = 1; i <= segs_len && seg_buffer[i].key<= k; i++);
     int i;
     for(i = 1; i <= segs_len && seg_buffer[i].key<= k; i++);
 
     i--;
-    // int a = 0;
+
     if (i <= 0)
     {
         ApproxPos appos = {0, 0, 0};

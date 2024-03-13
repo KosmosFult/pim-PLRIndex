@@ -6,6 +6,7 @@
 #include "pgm/pgm_index.hpp"
 #include "defs.h"
 #include <algorithm>
+#include <chrono>
 
 using namespace dpu;
 
@@ -37,7 +38,7 @@ void populate_mram(DpuSetOps &dpu, std::vector<int> &keys)
 	dpu.copy("keys", keys, static_cast<unsigned>(BUFFER_SIZE * sizeof(int)));
 }
 
-void generate_data(std::vector<int> &data, int data_size = 5000000)
+void generate_data(std::vector<int> &data, int data_size = 10000000)
 {
 	data.resize(data_size);
 	std::generate(data.begin(), data.end(), std::rand);
@@ -134,9 +135,9 @@ std::vector<T> get_subset(const std::vector<T> &original, int start, int len)
 	if (start < 0 || len <= 0 || (start + len) > original.size())
 	{
 		// 对于最下层不会进入
-		if((start + len) == (original.size() + 1))
+		if ((start + len) == (original.size() + 1))
 		{
-			auto subset =  std::vector<T>(original.begin() + start, original.begin() + start + len);
+			auto subset = std::vector<T>(original.begin() + start, original.begin() + start + len);
 			subset.push_back(original.back());
 			return subset;
 		}
@@ -170,9 +171,9 @@ int distribute(dpu::DpuSet &system, const pgm::PGMIndex<int, epsilon> &pgi, cons
 		// 这里前12字节(sub_segs第一个元素存放segments的数量)
 		// 注意 auto pos = std::min<size_t>((*it)(k), std::next(it)->intercept);
 		// 因此需要多存一段
-		auto sub_segs = get_subset(segments, distri_list[i].segs_index, distri_list[i].n_segs+1);
+		auto sub_segs = get_subset(segments, distri_list[i].segs_index, distri_list[i].n_segs + 1);
 		auto sub_data = get_subset(data, distri_list[i].lkey_i, distri_list[i].rkey_i + 1 - distri_list[i].lkey_i);
-		
+
 		sub_segs.insert(sub_segs.begin(), {distri_list[i].n_segs, 0, distri_list[i].lkey_i});
 		sub_data.insert(sub_data.begin(), sub_data.size());
 
@@ -209,7 +210,7 @@ std::vector<std::vector<T>> distribute_query(std::vector<T> &querys, dpu::DpuSet
 	for (auto &e : distri_list)
 	{
 		// 这里有个特殊情况即最后一个段key大于data中任何key, 一般这个段key是key最大值
-		if(e.lkey_i > e.rkey_i)
+		if (e.lkey_i > e.rkey_i)
 			fences.push_back(INT32_MAX);
 		else
 			fences.push_back(data[e.lkey_i]);
@@ -233,49 +234,108 @@ std::vector<std::vector<T>> distribute_query(std::vector<T> &querys, dpu::DpuSet
 	return querys_list;
 }
 
-
 std::vector<std::vector<int>> get_result(DpuSet &system)
 {
-	std::vector<std::vector<int>> result(system.dpus().size(), 
-				std::vector<int>(QUERY_BATCH));
-	
+	std::vector<std::vector<int>> result(system.dpus().size(),
+										 std::vector<int>(QUERY_BATCH));
+
 	system.copy(result, "result");
 	return result;
 }
 
-template<typename T>
+template <typename T>
 bool validate_result(std::vector<std::vector<T>> &query_list, std::vector<std::vector<T>> &result_list)
 {
-	for(int i = 0; i < query_list.size(); i++)
+	for (int i = 0; i < query_list.size(); i++)
 	{
-		for(int j = 1; j <= query_list[i][0]; j++)
-			if(query_list[i][j] != result_list[i][j])
+		for (int j = 1; j <= query_list[i][0]; j++)
+			if (query_list[i][j] != result_list[i][j])
 				return false;
 	}
 	return true;
 }
 
+bool query_test(DpuSet &system, int size_, std::vector<int> &querys)
+{
+	bool valid = true;
+	std::cout << "Query test..." << std::endl;
+
+	std::vector<std::vector<int>> query_matrix(size_);
+
+	for (int i = 0; i < size_; i++)
+		query_matrix[i] = generate_query(data, 1024);
+
+	auto start_time = std::chrono::high_resolution_clock::now();
+	for (int i = 0; i < size_; i++)
+	{
+		auto &querys = query_matrix[i];
+		// std::cout << "Query [" << i << "] start..." << std::endl;
+		auto query_list = distribute_query(querys, system);
+		system.exec();
+		auto result_list = get_result(system);
+
+		// valid = valid && validate_result(query_list, result_list);
+		// if (valid == false)
+		// 	std::cout << i << std::endl;
+	}
+
+	// 获取结束时间点
+	auto end_time = std::chrono::high_resolution_clock::now();
+	auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+	std::cout << "Execution time: " << duration.count() << " microseconds" << std::endl;
+
+	std::cout << "validate query: " << valid << std::endl;
+
+	// 双重循环将二维向量展开成一维向量
+	for (const auto &row : query_matrix)
+	{
+		querys.insert(querys.end(), row.begin(), row.end());
+	}
+	return valid;
+}
 
 int main(int argc, char **argv)
 {
 	try
 	{
+		std::cout << "Data generating..." << std::endl;
 		generate_data(data);
+		std::cout << "PGM building..." << std::endl;
 		auto pgi = build_index(data);
-		auto system = DpuSet::allocate(64);
+		auto system = DpuSet::allocate(128);
 		system.load(dpu_binary);
 		distribute(system, pgi, data);
-		auto querys = generate_query(data, 1024);
-		auto query_list = distribute_query(querys, system);
 
-		std::cout << "Query start..." << std::endl;
-		system.exec();
 
-		auto result_list = get_result(system);
+		// auto querys = generate_query(data, 512);
 
-		std::cout << "validate query: " << validate_result(query_list, result_list) << std::endl;
+		// std::cout << "Query start..." << std::endl;
+		// auto query_list = distribute_query(querys, system);
+		// system.exec();
 
-		// system.log(std::cout);
+		// auto result_list = get_result(system);
+
+		// std::cout << "validate query: " << validate_result(query_list, result_list) << std::endl;
+
+		std::vector<int> querys2;
+		query_test(system, 128, querys2);
+
+		auto start_time = std::chrono::high_resolution_clock::now();
+		int count = 1;
+		for(auto &k : querys2)
+		{
+			auto range = pgi.search(k);
+			auto lo = data.begin() + range.lo;
+			auto hi = data.begin() + range.hi;
+			auto result_i = std::lower_bound(lo, hi, k);
+			if(result_i != data.end())
+				count++;
+		}
+		// 获取结束时间点
+		auto end_time = std::chrono::high_resolution_clock::now();
+		auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+		std::cout << "Execution time: " << duration.count() << " microseconds" << std::endl;
+		system.log(std::cout);
 	}
 	catch (const DpuError &e)
 	{

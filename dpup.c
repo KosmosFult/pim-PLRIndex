@@ -12,7 +12,7 @@
 #define DATA_SIZE 2 << 20
 #define ERROR 16
 #define max(a, b) ((a) > (b) ? (a) : (b))
-#define min(a, b) ((a) > (b) ? (b) : (a))
+#define min(a, b) ((a) > (b) ? (b) : (a))   // 慎用（类型转换），待删除
 #define MAX_SEGS 16
 
 // #define FIRST_SEG ((segment*)((void*)segments_list + sizeof(segment))) 为什么不行
@@ -44,6 +44,11 @@ __host uint32_t segs_len;
 __host uint32_t data_len;
 __host uint32_t lkey_i;
 
+/* Cache for the sequential reader */
+seqreader_buffer_t local_cache;
+/* The reader */
+seqreader_t sr;
+
 
 void print_info()
 {
@@ -68,6 +73,7 @@ void print_info()
 
 int init_data()
 {
+    local_cache = seqread_alloc();  // cache可以复用
     segs_len = segments_list[0].key;
     lkey_i = segments_list[0].intercept;
     data_len = data[0];
@@ -113,7 +119,7 @@ ApproxPos get_appos(int k)
     size_t cal_pos = seg_cal(&seg_buffer[i], k);
 
     cal_pos = min(cal_pos, seg_buffer[i+1].intercept);   // 为什么要这样
-    cal_pos -= lkey_i;
+    cal_pos = cal_pos > lkey_i ? cal_pos-lkey_i : 0;
     size_t lo = PGM_SUB_EPS(cal_pos, EPSILON);
     size_t hi = PGM_ADD_EPS(cal_pos, EPSILON, data_len);
     ApproxPos appos = {cal_pos, lo, hi};
@@ -133,18 +139,16 @@ int search(int k)
 {
     ApproxPos appos = get_appos(k);
     // printf("appos[%d,%d,%d]\n", appos.pos, appos.lo, appos.hi);
+    // printf("appos[%d]: %d, %d, %d, %d\n", k, data_len, appos.lo, appos.hi, appos.pos);
+
 
     if(appos.hi == 0 && appos.lo == 0)
         return INT32_MIN;
 
     // 这里用seq read api
-
-    /* Cache for the sequential reader */
-    seqreader_buffer_t local_cache = seqread_alloc();
-    /* The reader */
-    seqreader_t sr;
     /* The pointer where we will access the cached data */
     uint8_t *current_char = seqread_init(local_cache, data+appos.lo, &sr);
+
 
     int tdata, pdata = INT32_MIN;
     for (int data_read = 0; data_read <= appos.hi - appos.lo; data_read++)
@@ -179,14 +183,14 @@ int query_handler()
 
     mram_write(result_buffer, result, QUERY_BATCH * sizeof(int));
 
-
-
     return 0;
 }
 
 int main()
 {
+    mem_reset();
     init_data();
+    printf("size pointer:%u\n", sizeof(int*));
     // print_info();
     query_handler();
     return 0;

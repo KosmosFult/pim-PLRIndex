@@ -15,7 +15,7 @@ all: $(TARGETS)
 
 
 dpuprog: $(DPU_SOURCES)
-	$(CC) $(DPU_SOURCES) -o $(BDIR)/dpuprog $(DINCLUDE_PATH)
+	$(CC) $(DPU_SOURCES) -O2 -g -o $(BDIR)/dpuprog $(DINCLUDE_PATH)
 
 hostprog: $(HOST_SCOURCES)
 	$(CXX) $(HOST_SCOURCES) -o $(BDIR)/hostprog  $(CXXFLAGS)
